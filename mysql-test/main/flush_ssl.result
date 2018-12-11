@@ -1,0 +1,27 @@
+# Kill the server
+connect  ssl_con,localhost,root,,,,,SSL;
+SELECT VARIABLE_VALUE INTO @ssl_not_after FROM INFORMATION_SCHEMA.SESSION_STATUS WHERE VARIABLE_NAME='Ssl_server_not_after';
+# Check that after  error in FLUSH_SSL, old certificate is still used.
+FLUSH SSL;
+ERROR HY000: Failed to refresh SSL, error: Unable to get certificate
+# check connection are still possible, and certificate has not changed (by checking Ssl_server_not_after)
+Result
+OK
+# Use a different certificate ("Not after" certificate field changed)
+FLUSH SSL;
+# Check new certificate used by new connection
+Result
+OK
+# Check that existing SSL connection still works, and uses old certificate, even if new one is loaded in FLUSH SSL
+connection ssl_con;
+SELECT IF(VARIABLE_VALUE=@ssl_not_after,'OK','FAIL') as Result FROM INFORMATION_SCHEMA.SESSION_STATUS WHERE VARIABLE_NAME='Ssl_server_not_after';
+Result
+OK
+# Cleanup
+FLUSH SSL;
+disconnect ssl_con;
+connection default;
+SELECT IF(VARIABLE_VALUE>0,'OK','FAIL') as Result FROM INFORMATION_SCHEMA.GLOBAL_STATUS WHERE VARIABLE_NAME='SSL_ACCEPTS';
+Result
+FAIL
+# Kill the server

@@ -1,0 +1,51 @@
+source include/have_ssl_communication.inc;
+
+let $ssl_cert=$MYSQLTEST_VARDIR/tmp/ssl_cert.pem;
+let $ssl_key=$MYSQLTEST_VARDIR/tmp/ssl_key.pem;
+
+copy_file $MYSQL_TEST_DIR/std_data/server-key.pem $ssl_key;
+copy_file $MYSQL_TEST_DIR/std_data/server-cert.pem $ssl_cert;
+
+let $restart_parameters=--ssl-key=$ssl_key --ssl-cert=$ssl_cert;
+--source include/kill_mysqld.inc
+--source include/start_mysqld.inc
+
+connect  ssl_con,localhost,root,,,,,SSL;
+SELECT VARIABLE_VALUE INTO @ssl_not_after FROM INFORMATION_SCHEMA.SESSION_STATUS WHERE VARIABLE_NAME='Ssl_server_not_after';
+let $ssl_not_after=`SELECT @ssl_not_after`;
+
+--echo # Check that after  error in FLUSH_SSL, old certificate is still used.
+remove_file $ssl_cert;
+remove_file $ssl_key;
+error ER_UNKNOWN_ERROR;
+FLUSH SSL;
+--echo # check connection are still possible, and certificate has not changed (by checking Ssl_server_not_after)
+exec $MYSQL --ssl  -e  "SELECT IF(VARIABLE_VALUE='$ssl_not_after','OK','FAIL') as Result FROM INFORMATION_SCHEMA.SESSION_STATUS WHERE VARIABLE_NAME='Ssl_server_not_after'";
+
+--echo # Use a different certificate ("Not after" certificate field changed)
+copy_file $MYSQL_TEST_DIR/std_data/server-new-key.pem $ssl_key;
+copy_file $MYSQL_TEST_DIR/std_data/server-new-cert.pem $ssl_cert;
+
+FLUSH SSL;
+
+--echo # Check new certificate used by new connection
+exec $MYSQL --ssl  -e  "SELECT IF(VARIABLE_VALUE <> '$ssl_not_after', 'OK', 'FAIL') as Result FROM INFORMATION_SCHEMA.SESSION_STATUS WHERE VARIABLE_NAME='Ssl_server_not_after'";
+
+--echo # Check that existing SSL connection still works, and uses old certificate, even if new one is loaded in FLUSH SSL
+connection ssl_con;
+SELECT IF(VARIABLE_VALUE=@ssl_not_after,'OK','FAIL') as Result FROM INFORMATION_SCHEMA.SESSION_STATUS WHERE VARIABLE_NAME='Ssl_server_not_after';
+--echo # Cleanup
+
+FLUSH SSL;
+
+disconnect ssl_con;
+connection default;
+SELECT IF(VARIABLE_VALUE>0,'OK','FAIL') as Result FROM INFORMATION_SCHEMA.GLOBAL_STATUS WHERE VARIABLE_NAME='SSL_ACCEPTS';
+
+remove_file $ssl_cert;
+remove_file $ssl_key;
+let $restart_parameters=;
+--source include/kill_mysqld.inc
+--source include/start_mysqld.inc
+
+
